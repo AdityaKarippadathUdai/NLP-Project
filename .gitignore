@@ -1,0 +1,22 @@
+# Models
+all-mpnet-base-v2/
+distilbert-base-uncased-mnli/
+flan-t5-large/
+ms-marco-MiniLM-L6-v2/
+t5_wikilarge_final/
+
+# Cache
+__pycache__/
+.gradio/
+
+# Notebooks
+*.ipynb
+
+# Env
+gpuenv/
+venv/
+.env
+
+1.py
+__huggingface_repos__.json
+eval.py
