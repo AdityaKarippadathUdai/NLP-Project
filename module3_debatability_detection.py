@@ -30,14 +30,34 @@ def _gemini_debatable(claim: str) -> str | None:
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=f"""
-Is the following sentence debatable?
+Task: Determine whether the following sentence is "debatable" or "non-debatable".
 
-A debatable sentence is one that reasonable people could disagree about.
-A non-debatable sentence is purely factual and verifiable.
+Definitions:
 
-Sentence: "{claim}"
+A sentence is NON-DEBATABLE if it:
+- States a verifiable fact
+- Reports confirmed scientific findings
+- Describes historical or ongoing events
+- Reports what an institution or authority stated (without endorsing it)
+- Contains no opinion, prediction, speculation, or value judgment
 
-Respond with only:
+A sentence is DEBATABLE if it:
+- Expresses an opinion or value judgment
+- Makes a prediction about the future
+- Uses speculative or uncertain language (e.g., could, may, might, likely, promise, expected to)
+- Claims something will significantly impact society (e.g., revolutionize, transform, solve, destroy)
+- Uses normative language (e.g., should, must, better, worse, necessary, harmful)
+- Combines fact with interpretation, evaluation, or future projection
+
+Important Rules:
+- If ANY part of the sentence is predictive, speculative, or evaluative, classify it as "debatable".
+- Do NOT consider political disagreement or misinformation.
+- Focus strictly on the structure and type of claim being made.
+
+Sentence:
+"{claim}"
+
+Respond with ONLY one word:
 debatable
 or
 non-debatable
