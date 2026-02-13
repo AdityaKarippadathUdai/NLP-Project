@@ -1,4 +1,4 @@
-# 🧠 Debate-Based Claim Analysis System
+#  🧠 Debate-Based Claim Analysis System 
 
 A multi-stage NLP pipeline that:
 
@@ -47,6 +47,17 @@ Module 3: Debatability Classification
       └── Layer 4: HuggingFace zero-shot fallback
       │
       ▼
+Module 4: Evidence Retrieval
+        │
+        ├── Web Search (DDGS)
+        ├── Scrape HTML (requests + BeautifulSoup)
+        ├── Remove boilerplate
+        ├── Extract meaningful paragraphs
+        ├── Deduplicate URLs
+        └── Return raw evidence chunks
+        │
+        ▼
+Module 5 (Future): Stance Classification
 Gradio UI Output
 ```
 ## 📦 Modules Implemented
@@ -144,6 +155,126 @@ typeform/distilbert-base-uncased-mnli
 
 Used only if previous layers fail.
 
+### 🔹 Module 4 – Evidence Retrieval (Web Search + Scraping)
+
+File: module4_webscraping.py
+
+#### 🎯 Purpose
+
+Module 4 performs pure evidence retrieval for debatable claims.
+
+It does NOT:
+
+Classify stance (that is Module 5’s job)
+
+Generate arguments
+
+Summarize content
+
+It ONLY:
+
+Searches the web
+
+Scrapes relevant article content
+
+Cleans and filters noise
+
+Deduplicates sources
+
+Returns structured evidence chunks
+
+This separation keeps the pipeline modular and scalable.
+
+#### 🌐 Retrieval Strategy
+
+For each debatable claim:
+
+🔎 Search 5 pro-leaning results
+
+🔎 Search 5 opposing-leaning results
+
+Scrape paragraphs from all 10 sources
+
+Return them together (not separated)
+
+⚠️ Module 4 does NOT label them as pro/anti.
+
+### 🛠 Technologies Used
+
+ddgs (DuckDuckGo search API)
+
+requests
+
+BeautifulSoup
+
+Custom boilerplate filtering
+
+URL validation (PDF & academic site blocking)
+
+### 🧹 Cleaning Logic
+
+Module 4 removes:
+
+Script/style tags
+
+Boilerplate phrases (subscribe, privacy policy, etc.)
+
+Very short paragraphs (< 100 characters)
+
+Duplicate URLs
+
+Blocked domains (ResearchGate, ScienceDirect)
+
+PDF links
+
+This ensures high-quality evidence chunks for downstream stance modeling.
+
+### ⚙️ Design Philosophy
+
+Module 4 is intentionally:
+
+🔹 Retrieval-only
+
+🔹 Model-agnostic
+
+🔹 Gemini-free
+
+🔹 No stance bias
+
+🔹 RAG-ready
+
+This ensures:
+
+Transparency
+
+Scalability
+
+Clean separation of concerns
+
+Compatibility with local LLMs (Mistral, LLaMA, etc.)
+### 📤 Output Format
+```
+[
+  {
+    "claim_id": 1,
+    "claim": "Artificial intelligence will replace most human jobs within the next 20 years",
+    "label": "debatable",
+    "evidence_chunks": [
+        {
+            "source": "CNN – AI replace human workers",
+            "url": "https://...",
+            "content": "Paragraph text..."
+        },
+        {
+            "source": "Brookings – AI and inequality",
+            "url": "https://...",
+            "content": "Paragraph text..."
+        }
+    ]
+  }
+]
+```
+
 ### 🖥️ User Interface
 
 File: interface.py
@@ -160,6 +291,7 @@ Extracted Claims
 Simplified Claims
 
 Debatability Classification
+
 
 Launch:
 ```
@@ -216,5 +348,6 @@ python verify_gemini.py
 ```
 
 Expected output:
-
+```
 hello
+```
