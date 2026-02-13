@@ -23,6 +23,7 @@ BOILERPLATE_KEYWORDS = [
     "advertisement",
     "all rights reserved",
     "newsletter",
+    "terms of use",
 ]
 
 
@@ -54,9 +55,9 @@ def _is_valid_url(url: str) -> bool:
 
 
 # ======================================================
-# Extract Rich Paragraph Chunks
+# Extract Paragraph Chunks
 # ======================================================
-def _extract_paragraph_chunks(url: str, max_paragraphs: int = 15):
+def _extract_paragraph_chunks(url: str, max_paragraphs: int = 12):
 
     try:
         headers = {
@@ -84,7 +85,7 @@ def _extract_paragraph_chunks(url: str, max_paragraphs: int = 15):
         for p in paragraphs:
             text = _clean_text(p.get_text())
 
-            if len(text) < 100:
+            if len(text) < 120:
                 continue
 
             if _is_boilerplate(text):
@@ -104,7 +105,7 @@ def _extract_paragraph_chunks(url: str, max_paragraphs: int = 15):
 # ======================================================
 # Web Search
 # ======================================================
-def _search_web(query: str, max_results: int = 6):
+def _search_web(query: str, max_results: int = 5):
 
     results = []
 
@@ -122,7 +123,7 @@ def _search_web(query: str, max_results: int = 6):
 
 
 # ======================================================
-# MODULE 4: PURE RETRIEVAL
+# MODULE 4: PURE RETRIEVAL (5 PRO + 5 CON SEARCH)
 # ======================================================
 def retrieve_evidence_chunks(claims: list[dict]) -> list[dict]:
 
@@ -138,12 +139,28 @@ def retrieve_evidence_chunks(claims: list[dict]) -> list[dict]:
 
         if label == "debatable":
 
-            # General neutral search query
-            query = claim_text + " research analysis debate impact study"
+            # -------------------------
+            # Pro-oriented queries
+            # -------------------------
+            pro_query = (
+                claim_text +
+                " benefits advantages positive impact supporting evidence research findings"
+            )
 
-            search_results = _search_web(query)
+            # -------------------------
+            # Con-oriented queries
+            # -------------------------
+            con_query = (
+                claim_text +
+                " criticism risks negative impact opposing view counterargument concerns debate"
+            )
 
-            for result in search_results:
+            pro_results = _search_web(pro_query, max_results=5)
+            con_results = _search_web(con_query, max_results=5)
+
+            combined_results = pro_results + con_results
+
+            for result in combined_results:
 
                 url = result.get("url")
 
