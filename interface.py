@@ -1,5 +1,5 @@
-
 import gradio as gr
+import time
 
 # ============================
 # Import Project Modules
@@ -7,52 +7,39 @@ import gradio as gr
 from module1_claim_extraction import extract_claims
 from module2_claim_simplification import simplify_claims
 from module3_debatability_detection import classify_debatability
+from module4_webscraping import retrieve_evidence_chunks
+
 
 # ============================
-# Pipeline Processing Function
+# Progressive Pipeline Function
 # ============================
 def process_text(paragraph: str):
-    """
-    Full pipeline execution:
-    1. Claim Extraction
-    2. Claim Simplification
-    3. Debatability Classification
-
-    Returns formatted outputs for Gradio display.
-    """
 
     if not paragraph or not paragraph.strip():
-        return "No input provided.", "No input provided.", "No input provided."
+        yield "No input provided.", "", "", ""
+        return
 
-    # ============================
-    # Step 1: Extract Claims
-    # ============================
+    # =====================================================
+    # STEP 1: Claim Extraction
+    # =====================================================
     claims_list = extract_claims(paragraph)
 
     if not claims_list:
-        return "No claims extracted.", "No claims extracted.", "No claims extracted."
+        yield "No claims extracted.", "", "", ""
+        return
 
-    # ============================
-    # Step 2: Simplify Claims
-    # ============================
-    simplified_list = simplify_claims(claims_list)
-
-    # ============================
-    # Step 3: Debatability Classification
-    # NOTE: As per requirement, classification is done on claims_list
-    # ============================
-    debatability_results = classify_debatability(claims_list)
-
-    # ============================
-    # Formatting Outputs
-    # ============================
-
-    # ---- Extracted Claims Table ----
     extracted_text = ""
     for item in claims_list:
         extracted_text += f"[{item['claim_id']}] {item['claim']}\n\n"
 
-    # ---- Simplified Claims Table ----
+    yield extracted_text.strip(), "", "", ""
+    time.sleep(0.5)
+
+    # =====================================================
+    # STEP 2: Claim Simplification
+    # =====================================================
+    simplified_list = simplify_claims(claims_list)
+
     simplified_text = ""
     for item in simplified_list:
         simplified_text += (
@@ -61,7 +48,14 @@ def process_text(paragraph: str):
             f"Simplified: {item['simplified_claim']}\n\n"
         )
 
-    # ---- Debatability Results Table ----
+    yield extracted_text.strip(), simplified_text.strip(), "", ""
+    time.sleep(0.5)
+
+    # =====================================================
+    # STEP 3: Debatability Classification
+    # =====================================================
+    debatability_results = classify_debatability(claims_list)
+
     debatability_text = ""
     for item in debatability_results:
         debatability_text += (
@@ -70,47 +64,83 @@ def process_text(paragraph: str):
             f"Label: {item['label']}\n\n"
         )
 
-    return extracted_text.strip(), simplified_text.strip(), debatability_text.strip()
+    yield (
+        extracted_text.strip(),
+        simplified_text.strip(),
+        debatability_text.strip(),
+        ""
+    )
+    time.sleep(0.5)
+
+    # =====================================================
+    # STEP 4: PURE WEB RETRIEVAL (Module 4)
+    # =====================================================
+    retrieved_results = retrieve_evidence_chunks(debatability_results)
+
+    scraped_text = ""
+
+    for item in retrieved_results:
+
+        if item["label"] == "debatable":
+
+            scraped_text += f"\n========== Claim {item['claim_id']} ==========\n"
+            scraped_text += f"Claim: {item['claim']}\n\n"
+
+            chunks = item.get("evidence_chunks", [])
+
+            if not chunks:
+                scraped_text += "No evidence retrieved.\n\n"
+                continue
+
+            for chunk in chunks:
+                scraped_text += f"Source: {chunk.get('source')}\n"
+                scraped_text += f"URL: {chunk.get('url')}\n"
+                scraped_text += f"Content:\n{chunk.get('content')}\n"
+                scraped_text += "-" * 80 + "\n\n"
+
+    if not scraped_text.strip():
+        scraped_text = "No web content retrieved (no debatable claims found)."
+
+    yield (
+        extracted_text.strip(),
+        simplified_text.strip(),
+        debatability_text.strip(),
+        scraped_text.strip()
+    )
+
 
 # ============================
-# Gradio Interface Definition
+# Gradio Interface
 # ============================
 with gr.Blocks(title="Debate-Based Claim Analysis System") as demo:
+
     gr.Markdown(
         """
         # 🧠 Debate-Based Claim Analysis System
 
         This interface performs:
-        1. **Claim Extraction**
-        2. **Claim Simplification with Entity Definitions**
-        3. **Debatability Classification**
 
-        Enter a paragraph to analyze its factual claims.
+        1️⃣ Claim Extraction  
+        2️⃣ Claim Simplification  
+        3️⃣ Debatability Classification  
+        4️⃣ Web Retrieval (Raw Evidence Chunks)
+
+        Evidence is retrieved but not yet classified as pro/against.
         """
     )
 
     input_text = gr.Textbox(
         label="Input Paragraph",
-        placeholder="Enter a paragraph containing factual statements...",
-        lines=8
+        lines=8,
+        placeholder="Enter a paragraph..."
     )
 
     run_button = gr.Button("Analyze Text")
 
-    extracted_output = gr.Textbox(
-        label="Extracted Claims",
-        lines=10
-    )
-
-    simplified_output = gr.Textbox(
-        label="Simplified Claims (with Wikipedia Definitions)",
-        lines=12
-    )
-
-    debatability_output = gr.Textbox(
-        label="Debatability Classification",
-        lines=10
-    )
+    extracted_output = gr.Textbox(label="Extracted Claims", lines=8)
+    simplified_output = gr.Textbox(label="Simplified Claims", lines=10)
+    debatability_output = gr.Textbox(label="Debatability Classification", lines=8)
+    scraped_output = gr.Textbox(label="Retrieved Evidence Chunks", lines=20)
 
     run_button.click(
         fn=process_text,
@@ -118,12 +148,14 @@ with gr.Blocks(title="Debate-Based Claim Analysis System") as demo:
         outputs=[
             extracted_output,
             simplified_output,
-            debatability_output
+            debatability_output,
+            scraped_output
         ]
     )
 
+
 # ============================
-# Launch Interface
+# Launch
 # ============================
 if __name__ == "__main__":
     demo.launch(share=True)

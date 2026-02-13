@@ -14,6 +14,9 @@ else:
     client = None
 
 
+# ======================================================
+# GEMINI CLASSIFIER (DOMAIN-ROBUST PROMPT)
+# ======================================================
 def _gemini_debatable(claim: str) -> str | None:
     """
     Returns:
@@ -30,37 +33,66 @@ def _gemini_debatable(claim: str) -> str | None:
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=f"""
-Task: Determine whether the following sentence is "debatable" or "non-debatable".
+You are a strict logical classifier.
 
-Definitions:
+Your task is to classify the sentence as either:
 
-A sentence is NON-DEBATABLE if it:
+- debatable
+- non-debatable
+
+DEFINITION OF NON-DEBATABLE:
+A sentence is non-debatable if it:
 - States a verifiable fact
+- Describes a historical event
+- Describes an ongoing mission, program, experiment, or activity
 - Reports confirmed scientific findings
-- Describes historical or ongoing events
-- Reports what an institution or authority stated (without endorsing it)
-- Contains no opinion, prediction, speculation, or value judgment
+- Reports what an institution or authority said (without evaluating it)
+- Describes exploration, investigation, research, or observation
+- Contains uncertainty about outcome but does NOT express an opinion
+- Is neutral and informational
 
-A sentence is DEBATABLE if it:
+DEFINITION OF DEBATABLE:
+A sentence is debatable if it:
 - Expresses an opinion or value judgment
-- Makes a prediction about the future
-- Uses speculative or uncertain language (e.g., could, may, might, likely, promise, expected to)
-- Claims something will significantly impact society (e.g., revolutionize, transform, solve, destroy)
-- Uses normative language (e.g., should, must, better, worse, necessary, harmful)
-- Combines fact with interpretation, evaluation, or future projection
+- Makes a prediction about future impact
+- Suggests something will significantly transform, revolutionize, solve, destroy, or harm
+- Uses normative language (should, must, better, worse, necessary, harmful)
+- Makes a claim about social, economic, ethical, or policy consequences
+- Contains interpretation or evaluation beyond neutral reporting
 
-Important Rules:
-- If ANY part of the sentence is predictive, speculative, or evaluative, classify it as "debatable".
-- Do NOT consider political disagreement or misinformation.
-- Focus strictly on the structure and type of claim being made.
+IMPORTANT DISTINCTIONS:
 
-Sentence:
-"{claim}"
+1) Scientific uncertainty ≠ debatability.
+   Example (non-debatable):
+   "The rover is searching for signs of life."
+
+2) Reporting research activity ≠ opinion.
+   Example (non-debatable):
+   "Scientists are studying quantum entanglement."
+
+3) Predicting major impact = debatable.
+   Example (debatable):
+   "Quantum computers will revolutionize cybersecurity."
+
+4) If the sentence only describes what is happening,
+   even if the outcome is unknown, classify as non-debatable.
+
+5) If ANY part evaluates impact,
+   predicts consequences, or implies societal change,
+   classify as debatable.
+
+Final rule:
+If the sentence can be verified as true or false
+without requiring personal interpretation,
+classify as non-debatable.
 
 Respond with ONLY one word:
 debatable
 or
 non-debatable
+
+Sentence:
+"{claim}"
 """
         )
 
@@ -152,13 +184,40 @@ def _is_authoritative_fact(text: str) -> bool:
 
 
 # ======================================================
-# LAYER 2: ATTRIBUTION / STANCE
+# LAYER 2: SCIENTIFIC / MISSION CONTEXT PROTECTION
+# ======================================================
+SCIENTIFIC_CONTEXT_KEYWORDS = [
+    "rover",
+    "nasa",
+    "mission",
+    "launched",
+    "explore",
+    "exploring",
+    "observatory",
+    "satellite",
+    "collider",
+    "experiment",
+    "study",
+    "researchers at",
+    "ipcc",
+    "cern",
+    "laboratory",
+    "telescope",
+]
+
+
+def _is_scientific_context(text: str) -> bool:
+    text = text.lower()
+    return any(keyword in text for keyword in SCIENTIFIC_CONTEXT_KEYWORDS)
+
+
+# ======================================================
+# LAYER 3: ATTRIBUTION / STANCE
 # ======================================================
 ATTRIBUTION_MARKERS = [
     "argue", "argues", "argued",
     "claim", "claims",
     "believe", "believes",
-    "warn", "warns", "warned",
     "critic", "critics",
     "supporter", "supporters",
     "experts say",
@@ -169,14 +228,29 @@ ATTRIBUTION_MARKERS = [
 
 
 # ======================================================
-# LAYER 3: MODALITY / UNCERTAINTY
+# LAYER 4: MODALITY / UNCERTAINTY
 # ======================================================
 MODAL_MARKERS = [
     "could", "may", "might", "likely", "unlikely",
     "potential", "risk", "threat",
     "expected to", "projected to",
     "forecast", "estimate",
-    "continues to",
+]
+
+
+# ======================================================
+# LAYER 5: IMPACT / TRANSFORMATION LANGUAGE
+# ======================================================
+IMPACT_MARKERS = [
+    "revolutionize",
+    "transform",
+    "change society",
+    "solve",
+    "destroy",
+    "reshape",
+    "disrupt",
+    "eliminate",
+    "replace",
 ]
 
 
@@ -191,19 +265,26 @@ def classify_claim_debatability(claim: str) -> str:
     if _is_authoritative_fact(text):
         return "non-debatable"
 
-    # 2️⃣ Gemini primary semantic reasoning
-    gemini_result = _gemini_debatable(claim)
-    if gemini_result:
-        return gemini_result
+    # 2️⃣ Scientific mission / reporting protection
+    if _is_scientific_context(text) and not any(marker in text for marker in IMPACT_MARKERS):
+        return "non-debatable"
 
-    # 3️⃣ Rule-based fallback
-    if any(marker in text for marker in ATTRIBUTION_MARKERS):
+    # 3️⃣ Strong impact or prediction markers
+    if any(marker in text for marker in IMPACT_MARKERS):
         return "debatable"
 
     if any(marker in text for marker in MODAL_MARKERS):
         return "debatable"
 
-    # 4️⃣ Zero-shot fallback
+    if any(marker in text for marker in ATTRIBUTION_MARKERS):
+        return "debatable"
+
+    # 4️⃣ Gemini primary reasoning
+    gemini_result = _gemini_debatable(claim)
+    if gemini_result:
+        return gemini_result
+
+    # 5️⃣ Zero-shot fallback
     if _zero_shot_debatable(claim):
         return "debatable"
 
