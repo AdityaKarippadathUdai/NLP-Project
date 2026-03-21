@@ -8,7 +8,9 @@ from module1_claim_extraction import extract_claims
 from module2_claim_simplification import simplify_claims
 from module3_debatability_detection import classify_debatability
 from module4_webscraping import retrieve_evidence_chunks
-from module5_evidence_classification import classify_evidence_stance
+
+# ✅ NEW MODULE 5
+from module5_evidence_classification import filter_and_rank_evidence
 
 
 # ============================
@@ -41,7 +43,6 @@ def process_text(paragraph: str):
     # =====================================================
     simplified_list = simplify_claims(claims_list)
 
-    # ✅ Merge simplified claims into main list
     for c, s in zip(claims_list, simplified_list):
         c["simplified_claim"] = s["simplified_claim"]
 
@@ -105,7 +106,7 @@ def process_text(paragraph: str):
                 scraped_text += "-" * 80 + "\n\n"
 
     if not scraped_text.strip():
-        scraped_text = "No web content retrieved (no debatable claims found)."
+        scraped_text = "No web content retrieved."
 
     yield (
         extracted_text.strip(),
@@ -117,48 +118,39 @@ def process_text(paragraph: str):
     time.sleep(0.5)
 
     # =====================================================
-    # STEP 5: Evidence Stance Classification (NEW)
+    # STEP 5: FILTER + RANK (NEW 🔥)
     # =====================================================
-    stance_results = classify_evidence_stance(retrieved_results)
+    filtered_results = filter_and_rank_evidence(retrieved_results)
 
-    stance_text = ""
+    filtered_text = ""
 
-    for item in stance_results:
+    for item in filtered_results:
 
-        stance_text += f"\n========== Claim {item['claim_id']} ==========\n"
-        stance_text += f"Claim: {item['claim']}\n\n"
+        filtered_text += f"\n========== Claim {item['claim_id']} ==========\n"
+        filtered_text += f"Claim: {item['claim']}\n\n"
 
-        # ✅ PRO
-        stance_text += "✅ PRO (Supports Claim):\n"
-        if item["pro_evidence"]:
-            for e in item["pro_evidence"]:
-                stance_text += f"- {e['content'][:200]}...\n"
-                stance_text += f"  Source: {e['source']}\n"
-                stance_text += f"  URL: {e['url']}\n\n"
-        else:
-            stance_text += "No supporting evidence found.\n\n"
+        evidence = item.get("filtered_evidence", [])
 
-        # ❌ AGAINST
-        stance_text += "❌ AGAINST (Opposes Claim):\n"
-        if item["against_evidence"]:
-            for e in item["against_evidence"]:
-                stance_text += f"- {e['content'][:200]}...\n"
-                stance_text += f"  Source: {e['source']}\n"
-                stance_text += f"  URL: {e['url']}\n\n"
-        else:
-            stance_text += "No opposing evidence found.\n\n"
+        if not evidence:
+            filtered_text += "No strong evidence found.\n\n"
+            continue
 
-        stance_text += "=" * 80 + "\n"
+        for e in evidence:
+            filtered_text += f"- {e['content'][:250]}...\n"
+            filtered_text += f"  Source: {e['source']}\n"
+            filtered_text += f"  URL: {e['url']}\n\n"
 
-    if not stance_text.strip():
-        stance_text = "No stance classification available."
+        filtered_text += "=" * 80 + "\n"
+
+    if not filtered_text.strip():
+        filtered_text = "No filtered evidence available."
 
     yield (
         extracted_text.strip(),
         simplified_text.strip(),
         debatability_text.strip(),
         scraped_text.strip(),
-        stance_text.strip()
+        filtered_text.strip()
     )
 
 
@@ -171,15 +163,15 @@ with gr.Blocks(title="Debate-Based Claim Analysis System") as demo:
         """
         # 🧠 Debate-Based Claim Analysis System
 
-        This interface performs:
+        This system performs:
 
         1️⃣ Claim Extraction  
         2️⃣ Claim Simplification  
         3️⃣ Debatability Classification  
         4️⃣ Web Retrieval  
-        5️⃣ Evidence Stance Classification (NEW ✅)
+        5️⃣ Evidence Filtering & Ranking ✅
 
-        Now includes PRO vs AGAINST analysis.
+        ⚠️ Final reasoning (pro/against) should be done using LLM (Module 6)
         """
     )
 
@@ -194,8 +186,8 @@ with gr.Blocks(title="Debate-Based Claim Analysis System") as demo:
     extracted_output = gr.Textbox(label="Extracted Claims", lines=8)
     simplified_output = gr.Textbox(label="Simplified Claims", lines=10)
     debatability_output = gr.Textbox(label="Debatability Classification", lines=8)
-    scraped_output = gr.Textbox(label="Retrieved Evidence Chunks", lines=20)
-    stance_output = gr.Textbox(label="Pro vs Against Evidence", lines=20)  # ✅ NEW
+    scraped_output = gr.Textbox(label="Retrieved Evidence", lines=20)
+    filtered_output = gr.Textbox(label="Filtered Evidence (Top Ranked)", lines=20)
 
     run_button.click(
         fn=process_text,
@@ -205,7 +197,7 @@ with gr.Blocks(title="Debate-Based Claim Analysis System") as demo:
             simplified_output,
             debatability_output,
             scraped_output,
-            stance_output  # ✅ NEW OUTPUT
+            filtered_output
         ]
     )
 

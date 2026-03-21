@@ -1,49 +1,43 @@
 import requests
 import re
+import time
+import random
 from bs4 import BeautifulSoup
 from ddgs import DDGS
-
+from urllib.parse import urlparse
 
 # ======================================================
-# Clean Text
+# CONFIG
+# ======================================================
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
+
+TIMEOUT = 10
+MAX_RETRIES = 2
+MAX_WEBSITES = 6
+
+# ======================================================
+# CLEAN TEXT
 # ======================================================
 def _clean_text(text: str) -> str:
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    return re.sub(r"\s+", " ", text).strip()
 
 
 # ======================================================
-# Boilerplate Filtering
+# URL FILTERING
 # ======================================================
-BOILERPLATE_KEYWORDS = [
-    "subscribe",
-    "sign in",
-    "privacy policy",
-    "cookie policy",
-    "advertisement",
-    "all rights reserved",
-    "newsletter",
-    "terms of use",
-]
-
-
-def _is_boilerplate(text: str) -> bool:
-    text_lower = text.lower()
-    return any(keyword in text_lower for keyword in BOILERPLATE_KEYWORDS)
-
-
-# ======================================================
-# URL Validation
-# ======================================================
-BLOCKED_EXTENSIONS = [".pdf"]
-BLOCKED_DOMAINS = ["researchgate.net", "sciencedirect.com"]
-
+BLOCKED_EXTENSIONS = [".pdf", ".ppt", ".doc"]
+BLOCKED_DOMAINS = ["researchgate.net", "sciencedirect.com", "academia.edu"]
 
 def _is_valid_url(url: str) -> bool:
     if not url:
         return False
 
     url_lower = url.lower()
+
+    if "bing.com/aclick" in url_lower:
+        return False
 
     if any(ext in url_lower for ext in BLOCKED_EXTENSIONS):
         return False
@@ -55,57 +49,180 @@ def _is_valid_url(url: str) -> bool:
 
 
 # ======================================================
-# Extract Paragraph Chunks
+# DOMAIN
 # ======================================================
-def _extract_paragraph_chunks(url: str, max_paragraphs: int = 12):
+def _get_domain(url: str) -> str:
+    try:
+        return urlparse(url).netloc
+    except:
+        return ""
+
+
+# ======================================================
+# ARGUMENT SIGNAL
+# ======================================================
+ARGUMENT_KEYWORDS = [
+    "however","but","although","on the other hand",
+    "benefit","advantage","improve","increase",
+    "risk","problem","challenge","concern",
+    "argue","claim","impact","affect",
+    "replace","automation","jobs","employment"
+]
+
+def _arg_score(text: str) -> int:
+    t = text.lower()
+    return sum(1 for w in ARGUMENT_KEYWORDS if w in t)
+
+
+# ======================================================
+# RELEVANCE (RELAXED 🔥)
+# ======================================================
+def _relevance_score(claim: str, text: str) -> int:
+    c = set(re.findall(r"\w+", claim.lower()))
+    t = set(re.findall(r"\w+", text.lower()))
+    return len(c.intersection(t))
+
+
+# ======================================================
+# BAD FILTER
+# ======================================================
+BAD_PATTERNS = [
+    "sign up","learn more","advertisement",
+    "click here","free trial","apply now"
+]
+
+def _is_bad_content(text: str) -> bool:
+    t = text.lower()
+    return any(p in t for p in BAD_PATTERNS)
+
+
+# ======================================================
+# FETCH PAGE
+# ======================================================
+def _fetch_page(url: str):
+    for _ in range(MAX_RETRIES):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+            if r.status_code == 200:
+                return r.text
+        except:
+            time.sleep(1)
+    return None
+
+
+# ======================================================
+# SMART MERGING 🔥
+# ======================================================
+def _merge_sentences(sentences, max_len=450):
+    chunks = []
+    current = ""
+
+    for s in sentences:
+
+        if len(current) == 0:
+            current = s
+            continue
+
+        # merge only if related (keyword overlap)
+        overlap = len(set(s.split()) & set(current.split()))
+
+        if overlap > 2 and len(current) + len(s) < max_len:
+            current += " " + s
+        else:
+            chunks.append(current.strip())
+            current = s
+
+    if current:
+        chunks.append(current.strip())
+
+    return chunks
+
+
+# ======================================================
+# CHUNK SCORING 🔥🔥🔥
+# ======================================================
+def _score_chunk(claim, text):
+    rel = _relevance_score(claim, text)
+    arg = _arg_score(text)
+    length_bonus = min(len(text) / 200, 1)
+
+    return rel * 0.5 + arg * 0.4 + length_bonus
+
+
+# ======================================================
+# EXTRACTION (IMPROVED)
+# ======================================================
+def _extract_chunks(url: str, claim: str, max_chunks: int = 6):
+
+    html = _fetch_page(url)
+    if not html:
+        return []
 
     try:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            )
-        }
+        soup = BeautifulSoup(html, "html.parser")
 
-        response = requests.get(url, headers=headers, timeout=10)
-
-        if response.status_code != 200:
-            return []
-
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        for tag in soup(["script", "style", "noscript"]):
+        for tag in soup(["script","style","noscript"]):
             tag.decompose()
 
         paragraphs = soup.find_all("p")
 
-        chunks = []
+        sentences = []
 
         for p in paragraphs:
+
             text = _clean_text(p.get_text())
 
-            if len(text) < 120:
+            if len(text) < 80:
                 continue
 
-            if _is_boilerplate(text):
+            if _is_bad_content(text):
                 continue
 
-            chunks.append(text)
+            # relaxed filtering 🔥
+            if _relevance_score(claim, text) < 1 and _arg_score(text) == 0:
+                continue
 
-            if len(chunks) >= max_paragraphs:
+            sents = re.split(r"(?<=[.!?])\s+", text)
+
+            for s in sents:
+                s = s.strip()
+
+                if len(s) < 50:
+                    continue
+
+                sentences.append(s)
+
+        # 🔥 merge intelligently
+        merged = _merge_sentences(sentences)
+
+        # 🔥 score + sort
+        scored = [(c, _score_chunk(claim, c)) for c in merged]
+        scored.sort(key=lambda x: x[1], reverse=True)
+
+        # 🔥 deduplicate
+        seen = set()
+        final = []
+
+        for c, _ in scored:
+            key = c[:120]
+            if key in seen:
+                continue
+            seen.add(key)
+            final.append(c)
+
+            if len(final) >= max_chunks:
                 break
 
-        return chunks
+        return final
 
-    except Exception:
+    except:
         return []
 
 
 # ======================================================
-# Web Search
+# SEARCH
 # ======================================================
-def _search_web(query: str, max_results: int = 5):
+def _search_web(query: str, max_results: int = 8):
 
     results = []
 
@@ -116,14 +233,14 @@ def _search_web(query: str, max_results: int = 5):
                     "title": r.get("title"),
                     "url": r.get("href")
                 })
-    except Exception:
+    except:
         pass
 
     return results
 
 
 # ======================================================
-# MODULE 4: PURE RETRIEVAL (5 PRO + 5 CON SEARCH)
+# MAIN MODULE 4
 # ======================================================
 def retrieve_evidence_chunks(claims: list[dict]) -> list[dict]:
 
@@ -131,7 +248,7 @@ def retrieve_evidence_chunks(claims: list[dict]) -> list[dict]:
 
     for item in claims:
 
-        claim_text = item.get("claim", "")
+        claim_text = item.get("simplified_claim") or item.get("claim", "")
         label = item.get("label", "")
 
         evidence_chunks = []
@@ -139,28 +256,24 @@ def retrieve_evidence_chunks(claims: list[dict]) -> list[dict]:
 
         if label == "debatable":
 
-            # -------------------------
-            # Pro-oriented queries
-            # -------------------------
-            pro_query = (
-                claim_text +
-                " benefits advantages positive impact supporting evidence research findings"
-            )
+            queries = [
+                f"{claim_text} pros cons",
+                f"{claim_text} arguments for against",
+                f"{claim_text} impact jobs",
+                f"{claim_text} debate"
+            ]
 
-            # -------------------------
-            # Con-oriented queries
-            # -------------------------
-            con_query = (
-                claim_text +
-                " criticism risks negative impact opposing view counterargument concerns debate"
-            )
+            search_results = []
 
-            pro_results = _search_web(pro_query, max_results=5)
-            con_results = _search_web(con_query, max_results=5)
+            for q in queries:
+                search_results.extend(_search_web(q, max_results=5))
 
-            combined_results = pro_results + con_results
+            website_count = 0
 
-            for result in combined_results:
+            for result in search_results:
+
+                if website_count >= MAX_WEBSITES:
+                    break
 
                 url = result.get("url")
 
@@ -171,15 +284,18 @@ def retrieve_evidence_chunks(claims: list[dict]) -> list[dict]:
                     continue
 
                 seen_urls.add(url)
+                website_count += 1
 
-                paragraphs = _extract_paragraph_chunks(url)
+                chunks = _extract_chunks(url, claim_text)
 
-                for para in paragraphs:
+                for c in chunks:
                     evidence_chunks.append({
                         "source": result.get("title"),
                         "url": url,
-                        "content": para
+                        "content": c
                     })
+
+                time.sleep(random.uniform(0.5, 1.0))
 
         enriched_results.append({
             "claim_id": item.get("claim_id"),

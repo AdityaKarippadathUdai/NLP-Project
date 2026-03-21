@@ -1,222 +1,245 @@
-import os
-import requests
-from google import genai
+import re
+import hashlib
+from typing import List, Dict
+from collections import defaultdict
 
 # ======================================================
-# GEMINI SETUP (PRIMARY CLASSIFIER)
+# CONFIG
 # ======================================================
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+MIN_TEXT_LENGTH = 80
+MAX_TEXT_LENGTH = 500
+TOP_K = 10
+MAX_PER_SOURCE = 2
 
-if GEMINI_API_KEY:
-    client = genai.Client(api_key=GEMINI_API_KEY)
-else:
-    client = None
-
-
-# ======================================================
-# GEMINI STANCE CLASSIFIER
-# ======================================================
-def _gemini_classify_stance(claim: str, evidence: str) -> str | None:
-    """
-    Returns:
-        "pro", "against", "neutral", or None if failed
-    """
-
-    if not client:
-        return None
-
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=f"""
-You are an expert debate analyst.
-
-TASK:
-Classify the relationship between the CLAIM and the EVIDENCE.
-
-LABELS:
-- PRO → Evidence supports the claim
-- AGAINST → Evidence contradicts or challenges the claim
-- NEUTRAL → Evidence is unrelated or unclear
-
-RULES:
-- Focus only on logical meaning
-- Ignore writing style
-- If evidence weakly supports → PRO
-- If evidence raises criticism or risks → AGAINST
-- If unsure → NEUTRAL
-
-Respond with ONLY one word:
-pro
-against
-neutral
-
-CLAIM:
-"{claim}"
-
-EVIDENCE:
-"{evidence}"
-"""
-        )
-
-        if not response.text:
-            return None
-
-        answer = response.text.strip().lower()
-
-        if "pro" in answer:
-            return "pro"
-        if "against" in answer:
-            return "against"
-        if "neutral" in answer:
-            return "neutral"
-
-        return None
-
-    except Exception as e:
-        print("❌ Gemini stance error:", e)
-        return None
+MIN_RELEVANCE = 2
+MIN_ARGUMENT_SCORE = 1
 
 
 # ======================================================
-# HF ZERO-SHOT FALLBACK
+# CLEAN
 # ======================================================
-HF_API_TOKEN = os.getenv("HF_API_TOKEN")
-
-API_URL = "https://api-inference.huggingface.co/models/facebook/bart-large-mnli"
-
-HEADERS = {
-    "Authorization": f"Bearer {HF_API_TOKEN}"
-} if HF_API_TOKEN else {}
-
-
-def _hf_classify_stance(claim: str, evidence: str) -> str:
-    """
-    Returns: pro / against / neutral
-    """
-
-    text = f"Claim: {claim} Evidence: {evidence}"
-
-    payload = {
-        "inputs": text,
-        "parameters": {
-            "candidate_labels": [
-                "supports the claim",
-                "opposes the claim",
-                "neutral or unrelated"
-            ]
-        }
-    }
-
-    try:
-        response = requests.post(
-            API_URL,
-            headers=HEADERS,
-            json=payload,
-            timeout=15
-        )
-
-        if response.status_code != 200:
-            return "neutral"
-
-        result = response.json()
-        labels = result.get("labels", [])
-
-        if not labels:
-            return "neutral"
-
-        top_label = labels[0].lower()
-
-        if "support" in top_label:
-            return "pro"
-        elif "oppose" in top_label:
-            return "against"
-        else:
-            return "neutral"
-
-    except Exception:
-        return "neutral"
+def _clean(text: str) -> str:
+    if not text:
+        return ""
+    return re.sub(r"\s+", " ", text).strip()
 
 
 # ======================================================
-# MAIN MODULE FUNCTION
+# GENERIC FILTER
 # ======================================================
-def classify_evidence_stance(retrieved_results: list[dict]) -> list[dict]:
-    """
-    Input:
-        Output from Module 4
+GENERIC_PATTERNS = [
+    "this article", "we explore", "this study",
+    "in this article", "this chapter",
+    "discussion", "learn more", "click here",
+    "sign up", "newsletter", "advertisement",
+    "the question of", "we examine"
+]
 
-    Output:
-        [
-            {
-                "claim_id": int,
-                "claim": str,
-                "pro_evidence": [...],
-                "against_evidence": [...],
-                "neutral_evidence": [...]
-            }
+
+def _is_generic(text: str) -> bool:
+    t = text.lower()
+    return any(p in t for p in GENERIC_PATTERNS)
+
+
+# ======================================================
+# WEAK CONTENT FILTER 🔥
+# ======================================================
+def _is_weak(text: str) -> bool:
+    t = text.lower()
+
+    weak_patterns = [
+        "experts say", "studies show",
+        "it is believed", "it is expected",
+        "many believe", "there is concern"
+    ]
+
+    if any(p in t for p in weak_patterns):
+        has_number = bool(re.search(r"\d+", t))
+        strong_words = [
+            "replace", "eliminate", "create",
+            "increase", "decrease", "loss",
+            "growth", "automation"
         ]
-    """
+        has_signal = any(w in t for w in strong_words)
+
+        if not has_number and not has_signal:
+            return True
+
+    return False
+
+
+# ======================================================
+# TOKENIZE
+# ======================================================
+def _tokenize(text: str) -> set:
+    return set(re.findall(r"\w+", text.lower()))
+
+
+# ======================================================
+# RELEVANCE
+# ======================================================
+def _relevance(claim: str, text: str) -> int:
+    return len(_tokenize(claim).intersection(_tokenize(text)))
+
+
+# ======================================================
+# ARGUMENT SCORE
+# ======================================================
+ARG_KEYWORDS = [
+    "job", "employment", "replace", "automation",
+    "workers", "labor", "economy", "impact",
+    "increase", "decrease", "growth", "loss",
+    "risk", "benefit", "challenge", "disrupt"
+]
+
+
+def _arg_score(text: str) -> int:
+    t = text.lower()
+    return sum(1 for w in ARG_KEYWORDS if w in t)
+
+
+# ======================================================
+# STRONG SIGNAL SCORE 🔥
+# ======================================================
+def _strong_signal(text: str) -> int:
+    t = text.lower()
+
+    signals = [
+        "replace", "eliminate", "displace",
+        "job loss", "mass unemployment",
+        "create jobs", "new jobs",
+        "augment", "assist", "complement"
+    ]
+
+    return sum(1 for s in signals if s in t)
+
+
+# ======================================================
+# FACT DENSITY 🔥
+# ======================================================
+def _fact_density(text: str) -> float:
+    words = text.split()
+    if not words:
+        return 0
+
+    numbers = len(re.findall(r"\d+", text))
+    return numbers / len(words)
+
+
+# ======================================================
+# HASH (DEDUP)
+# ======================================================
+def _hash_text(text: str) -> str:
+    return hashlib.md5(text.encode("utf-8")).hexdigest()
+
+
+# ======================================================
+# VALIDATION
+# ======================================================
+def _is_valid(text: str) -> bool:
+    if not text:
+        return False
+    if len(text) < MIN_TEXT_LENGTH:
+        return False
+    if _is_generic(text):
+        return False
+    if _is_weak(text):
+        return False
+    return True
+
+
+# ======================================================
+# MAIN FUNCTION
+# ======================================================
+def filter_and_rank_evidence(retrieved_results: List[Dict]) -> List[Dict]:
 
     final_results = []
 
     for item in retrieved_results:
 
-        claim_id = item.get("claim_id")
-        claim_text = item.get("claim")
-        label = item.get("label")
+        if item.get("label") != "debatable":
+            continue
 
-        pro_list = []
-        against_list = []
-        neutral_list = []
+        claim = _clean(item.get("claim", ""))
+        chunks = item.get("evidence_chunks", [])
 
-        # Only process debatable claims
-        if label == "debatable":
+        scored = []
+        seen = set()
+        source_count = defaultdict(int)
 
-            for chunk in item.get("evidence_chunks", []):
+        for ch in chunks:
 
-                content = chunk.get("content", "")
-                source = chunk.get("source")
-                url = chunk.get("url")
+            text = _clean(ch.get("content", ""))
 
-                if not content or len(content) < 50:
-                    continue
+            if not _is_valid(text):
+                continue
 
-                # ============================
-                # Step 1: Gemini Classification
-                # ============================
-                stance = _gemini_classify_stance(claim_text, content)
+            rel = _relevance(claim, text)
+            arg = _arg_score(text)
+            signal = _strong_signal(text)
+            density = _fact_density(text)
 
-                # ============================
-                # Step 2: Fallback
-                # ============================
-                if not stance:
-                    stance = _hf_classify_stance(claim_text, content)
+            if rel < MIN_RELEVANCE or arg < MIN_ARGUMENT_SCORE:
+                continue
 
-                evidence_obj = {
-                    "source": source,
-                    "url": url,
-                    "content": content
-                }
+            # 🔥 FINAL SCORE
+            score = (
+                (1.5 * rel) +
+                (2.0 * arg) +
+                (2.5 * signal) +
+                (5.0 * density)
+            )
 
-                # ============================
-                # Step 3: Store by category
-                # ============================
-                if stance == "pro":
-                    pro_list.append(evidence_obj)
+            text = text[:MAX_TEXT_LENGTH]
 
-                elif stance == "against":
-                    against_list.append(evidence_obj)
+            h = _hash_text(text)
+            if h in seen:
+                continue
 
-                else:
-                    neutral_list.append(evidence_obj)
+            source = ch.get("source", "")
+            if source_count[source] >= MAX_PER_SOURCE:
+                continue
+
+            seen.add(h)
+            source_count[source] += 1
+
+            scored.append({
+                "source": source,
+                "url": ch.get("url", ""),
+                "content": text,
+                "score": round(score, 3)
+            })
+
+        # =========================
+        # SORT
+        # =========================
+        scored.sort(key=lambda x: x["score"], reverse=True)
+
+        # =========================
+        # SMART FALLBACK 🔥
+        # =========================
+        if not scored:
+            fallback = []
+
+            for ch in chunks:
+                text = _clean(ch.get("content", ""))
+                if len(text) > 80:
+                    fallback.append({
+                        "source": ch.get("source", ""),
+                        "url": ch.get("url", ""),
+                        "content": text[:MAX_TEXT_LENGTH],
+                        "score": 0.1
+                    })
+
+                if len(fallback) >= TOP_K:
+                    break
+
+            scored = fallback
 
         final_results.append({
-            "claim_id": claim_id,
-            "claim": claim_text,
-            "pro_evidence": pro_list,
-            "against_evidence": against_list,
-            "neutral_evidence": neutral_list
+            "claim_id": item.get("claim_id"),
+            "claim": claim,
+            "filtered_evidence": scored[:TOP_K]
         })
 
     return final_results
