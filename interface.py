@@ -14,13 +14,6 @@ from module6_llm_reasoning import generate_debate_output_stream
 
 
 # ============================
-# SAFE FORMAT HELPERS
-# ============================
-def safe_get(d, key, default=""):
-    return d.get(key, default) if isinstance(d, dict) else default
-
-
-# ============================
 # MAIN PIPELINE
 # ============================
 def process_text(paragraph: str):
@@ -102,7 +95,7 @@ def process_text(paragraph: str):
 
                 for chunk in chunks:
                     scraped_text += f"Source: {chunk.get('source')}\n"
-                    scraped_text += f"Content:\n{chunk.get('content')[:400]}...\n"
+                    scraped_text += f"Content:\n{chunk.get('content')[:300]}...\n"
                     scraped_text += "-" * 80 + "\n\n"
 
         if not scraped_text.strip():
@@ -137,7 +130,7 @@ def process_text(paragraph: str):
                 continue
 
             for e in evidence:
-                filtered_text += f"- {e['content'][:250]}...\n"
+                filtered_text += f"- {e['content'][:200]}...\n"
                 filtered_text += f"  Source: {e['source']}\n\n"
 
             filtered_text += "=" * 80 + "\n"
@@ -156,7 +149,7 @@ def process_text(paragraph: str):
         time.sleep(0.3)
 
         # =====================================================
-        # STEP 6: STREAMING (FIXED 🔥)
+        # STEP 6: LLM STREAMING (FINAL FIXED)
         # =====================================================
         final_text = ""
 
@@ -175,26 +168,8 @@ def process_text(paragraph: str):
                 )
 
             elif update["type"] == "final":
-
-                # ✅ DO NOT overwrite stream output
-                # OPTIONAL: append structured summary
-
-                structured = "\n\n========== FINAL SUMMARY ==========\n"
-                structured += f"Claim: {update['claim']}\n\n"
-
-                structured += "✅ PRO:\n"
-                for p in update.get("pro", []):
-                    structured += f"- {p}\n"
-
-                structured += "\n❌ AGAINST:\n"
-                for a in update.get("against", []):
-                    structured += f"- {a}\n"
-
-                structured += "\n⚖️ CONCLUSION:\n"
-                structured += f"{update.get('conclusion', '')}\n"
-
-                # 🔥 APPEND instead of replace
-                final_text += structured
+                # ✅ DO NOTHING (important fix)
+                # No overwrite, no extra formatting
 
                 yield (
                     extracted_text.strip(),
