@@ -10,13 +10,13 @@ import re
 MODEL_PATH = r"/home/aditya/Project/models/quantized/llama/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf"
 
 N_CTX = 4096
-MAX_GENERATION_TOKENS = 900   # stable generation
+MAX_GENERATION_TOKENS = 1500   # stable generation
 
 TEMPERATURE = 0.6
 TOP_P = 0.9
 REPEAT_PENALTY = 1.15
 
-RESERVED_OUTPUT_TOKENS = 700
+RESERVED_OUTPUT_TOKENS = 1200
 MAX_INPUT_TOKENS = N_CTX - RESERVED_OUTPUT_TOKENS
 
 
@@ -101,7 +101,7 @@ EVIDENCE:
 STRICT INSTRUCTIONS:
 - Give EXACTLY 3-5 PRO points
 - Give EXACTLY 3-5 AGAINST points
-- Keep each point under 2 lines
+- Keep each point under 3 lines
 - Do NOT use [1], [2] or citations
 - Do NOT add extra sections
 - Do NOT repeat the claim
@@ -120,7 +120,7 @@ AGAINST:
 - ...
 
 CONCLUSION:
-- 2 concise sentences only
+- 4-6 concise sentences only
 """
 
 
