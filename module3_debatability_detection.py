@@ -1,7 +1,7 @@
 import os
 import re
 import requests
-import google.generativeai as genai
+from google import genai
 
 # ======================================================
 # GEMINI SETUP (PRIMARY CLASSIFIER)
