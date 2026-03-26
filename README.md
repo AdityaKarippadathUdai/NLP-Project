@@ -680,22 +680,163 @@ Compatibility with offline systems
 }
 ```
 
-### 🖥️ User Interface
+### 🔹 User Interface – Gradio Pipeline Interface
 
 File: interface.py
 
-Built using:
+#### 🎯 Purpose
 
-Gradio Blocks
+The User Interface module provides an interactive front-end for the entire pipeline.
 
+It does NOT:
 
-Displays:
+Perform heavy processing itself  
 
-Extracted Claims
+Modify model logic  
 
-Simplified Claims
+Replace backend modules  
 
-Debatability Classification
+It ONLY:
+
+Connects all modules into a single pipeline  
+
+Streams outputs step-by-step  
+
+Displays intermediate and final results  
+
+Handles user interaction  
+
+This enables real-time visualization of the full NLP pipeline.
+
+---
+
+#### 🧠 Processing Flow (End-to-End Pipeline)
+
+When the user clicks **"Analyze Text"**, the following steps execute sequentially:
+
+---
+
+🔹 Step 1: Claim Extraction  
+- Calls Module 1 (`extract_claims`)  
+- Displays extracted claims with IDs  
+
+---
+
+🔹 Step 2: Claim Simplification  
+- Calls Module 2 (`simplify_claims`)  
+- Shows original + simplified claims  
+
+---
+
+🔹 Step 3: Debatability Classification  
+- Calls Module 3 (`classify_debatability`)  
+- Displays claim-wise labels (debatable / non-debatable)  
+
+---
+
+🔹 Step 4: Evidence Retrieval  
+- Calls Module 4 (`retrieve_evidence_chunks`)  
+- Displays scraped web content  
+- Shows sources + partial paragraphs  
+
+---
+
+🔹 Step 5: Evidence Filtering  
+- Calls Module 5 (`filter_and_rank_evidence`)  
+- Displays top-ranked evidence  
+- Shows cleaned and relevant chunks  
+
+---
+
+🔹 Step 6: LLM Reasoning (Streaming 🔥)  
+- Calls Module 6 (`generate_debate_output_stream`)  
+- Streams output token-by-token  
+- Displays live AI reasoning  
+
+---
+
+#### ⚡ Streaming Behavior
+
+- Uses Python generators (`yield`) for progressive updates  
+- UI updates after each module execution  
+- Final output is streamed in real-time  
+- Improves responsiveness and user experience  
+
+---
+
+#### 🖥️ UI Components
+
+🔹 Input  
+- Textbox for paragraph input  
+
+🔹 Button  
+- "Analyze Text" triggers full pipeline  
+
+🔹 Outputs (6 Panels)  
+1. Extracted Claims  
+2. Simplified Claims  
+3. Debatability Results  
+4. Retrieved Evidence  
+5. Filtered Evidence  
+6. AI Reasoning (Streaming Output)  
+
+---
+
+#### 🛠 Technologies Used
+
+Gradio (Blocks API)  
+
+Python generators (for streaming)  
+
+Modular pipeline integration  
+
+---
+
+#### ⚙️ Design Philosophy
+
+The UI is designed to be:
+
+🔹 Fully transparent (shows every pipeline stage)  
+
+🔹 Interactive and real-time  
+
+🔹 Modular (loosely coupled with backend)  
+
+🔹 Debug-friendly (easy to inspect each stage)  
+
+🔹 Streaming-first UX  
+
+This ensures:
+
+Better understanding of model behavior  
+
+Easy debugging and evaluation  
+
+Clear visualization of NLP pipeline  
+
+---
+
+#### ❗ Error Handling
+
+- Catches all exceptions using try-catch  
+- Displays full traceback in UI  
+- Prevents application crash  
+
+---
+
+#### 📤 Output Behavior
+
+The UI returns a tuple of 6 outputs:
+```
+(
+extracted_claims,
+simplified_claims,
+debatability_results,
+retrieved_evidence,
+filtered_evidence,
+final_llm_output_stream
+)
+```
 
 
 Launch:
