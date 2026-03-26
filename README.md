@@ -31,34 +31,108 @@ It is built for research, experimentation, and future expansion into argument mi
 ## 🏗️ Architecture
 ```
 Input Paragraph
-      │
-      ▼
-Module 1: Claim Extraction (Flan-T5)
-      │
-      ▼
-Module 2: Claim Simplification + Wikipedia Enrichment
-      │
-      ▼
-Module 3: Debatability Classification
-      │
-      ├── Layer 1: Authoritative factual override
-      ├── Layer 2: Gemini 2.5 Flash (semantic reasoning)
-      ├── Layer 3: Rule-based fallback
-      └── Layer 4: HuggingFace zero-shot fallback
-      │
-      ▼
-Module 4: Evidence Retrieval
-        │
-        ├── Web Search (DDGS)
-        ├── Scrape HTML (requests + BeautifulSoup)
-        ├── Remove boilerplate
-        ├── Extract meaningful paragraphs
-        ├── Deduplicate URLs
-        └── Return raw evidence chunks
-        │
-        ▼
-Module 5 (Future): Stance Classification
-Gradio UI Output
+│
+▼
+[Module 1: Claim Extraction (Flan-T5)]
+│
+├── Input: Raw paragraph
+├── Process:
+│ • Prompt-based generation using FLAN-T5
+│ • Splits paragraph into atomic, meaningful claims
+│ • Removes redundant / overlapping statements
+├── Output: List of structured claims
+│
+▼
+[Module 2: Claim Simplification + Wikipedia Enrichment]
+│
+├── Input: Extracted claims
+├── Process:
+│ • Simplification using FLAN-T5 (text-to-text transformation)
+│ • Named Entity Recognition using SpaCy
+│ • Entity linking via Wikipedia API
+│ • Fetch short definitions for detected entities
+│ • Append contextual explanations inline
+├── Output: Simplified + enriched claims
+│
+▼
+[Module 3: Debatability Classification (Multi-Layer Hybrid)]
+│
+├── Input: Simplified claims
+├── Layer 1: Authoritative Factual Override
+│ • Detects universally accepted facts
+│ • Uses predefined rules / keywords / patterns
+│ • Immediately marks as NON-DEBATABLE
+│
+├── Layer 2: Gemini 2.5 Flash (Semantic Reasoning)
+│ • Performs deep contextual understanding
+│ • Identifies subjectivity, opinion, or ambiguity
+│ • Returns reasoning-based label
+│
+├── Layer 3: Rule-Based Fallback
+│ • Heuristic checks (modal verbs, opinion words)
+│ • Ensures robustness if LLM response is unclear
+│
+├── Layer 4: HuggingFace Zero-Shot (DistilBERT)
+│ • Uses zero-shot classification (no fine-tuning)
+│ • Labels: "debatable" vs "non-debatable"
+│ • Acts as final fallback layer
+│
+├── Output:
+│ • Debatable claims → forwarded to next module
+│ • Non-debatable claims → filtered or flagged as factual
+│
+▼
+[Module 4: Evidence Retrieval]
+│
+├── Input: Debatable claims
+├── Process:
+│ • Query generation from claims
+│ • Web search using DuckDuckGo Search (DDGS)
+│ • Fetch top-k URLs
+│ • Scrape HTML using requests + BeautifulSoup
+│ • Remove boilerplate (scripts, ads, navigation elements)
+│ • Extract meaningful paragraphs
+│ • Chunk text into evidence snippets
+│ • Deduplicate URLs and repeated content
+├── Output: Raw evidence chunks per claim
+│
+▼
+[Module 5: Evidence Filtering & Refinement]
+│
+├── Input: Raw evidence chunks
+├── Process:
+│ • Remove irrelevant or noisy text
+│ • Rank evidence based on relevance to claim
+│ • Filter contradictory / low-quality sources
+│ • Keep top-k high-quality evidence snippets
+│ • Ensure diversity of sources (optional)
+├── Output: Clean, relevant, high-quality evidence
+│
+▼
+[Module 6: Response Generation (Balanced Output)]
+│
+├── Input:
+│ • Simplified claims
+│ • Debatability labels
+│ • Filtered evidence
+├── Process:
+│ • Generate supporting explanation using evidence
+│ • Generate counterarguments for debatable claims
+│ • Combine claim + explanation + counterpoints
+│ • Maintain neutral, balanced tone
+│ • Structure output for readability
+├── Output: Final explainable, balanced response
+│
+▼
+[Gradio UI]
+│
+├── Displays:
+│ • Simplified claims
+│ • Debatability status
+│ • Supporting evidence
+│ • Counterarguments
+│
+└── Interactive user interface
 ```
 ## 📦 Modules Implemented
 ### 🔹 Module 1 – Claim Extraction
@@ -273,6 +347,337 @@ Compatibility with local LLMs (Mistral, LLaMA, etc.)
     ]
   }
 ]
+```
+
+### 🔹 Module 5 – Evidence Filtering & Ranking (Semantic + Heuristic)
+
+File: module5_evidence_classification.py
+
+#### 🎯 Purpose
+
+Module 5 processes raw evidence from Module 4 and selects the most relevant, high-quality evidence for each debatable claim.
+
+It does NOT:
+
+Classify stance (pro / anti)  
+
+Generate responses  
+
+Perform web scraping  
+
+It ONLY:
+
+Filters noisy or weak evidence  
+
+Ranks evidence using hybrid scoring  
+
+Uses semantic similarity + heuristics  
+
+Returns top-k high-quality evidence  
+
+This improves downstream generation quality and reduces hallucination.
+
+---
+
+#### 🧠 Processing Strategy
+
+For each debatable claim:
+
+🔹 Input: Raw evidence chunks from Module 4  
+
+🔹 Step 1: Cleaning  
+- Normalize whitespace  
+- Trim text  
+
+🔹 Step 2: Hard Filtering  
+- Remove short text (< 80 chars)  
+- Remove generic content (e.g., “this article”, “click here”)  
+- Remove weak statements (e.g., “experts say” without numbers)  
+
+🔹 Step 3: Relevance Scoring  
+- Token overlap between claim and evidence  
+- Ensures topical alignment  
+
+🔹 Step 4: Argument Strength Scoring  
+- Detects domain-relevant keywords (e.g., jobs, economy, automation)  
+- Filters non-informative text  
+
+🔹 Step 5: Deduplication  
+- Uses MD5 hashing  
+- Removes repeated or near-identical chunks  
+
+🔹 Step 6: Source Control  
+- Limits max chunks per source (prevents bias)  
+
+🔹 Step 7: Semantic Similarity (MiniLM 🔥)  
+- Uses `sentence-transformers/all-MiniLM-L6-v2`  
+- Mean pooling over transformer embeddings  
+- Computes cosine similarity with claim  
+
+🔹 Step 8: Final Scoring Formula  
+
+Score is computed as:
+
+- Relevance score × 1.5  
+- Argument score × 2.0  
+- Semantic similarity × 3.0  
+
+Higher weight is given to semantic similarity.
+
+🔹 Step 9: Ranking  
+- Sort all candidates by final score  
+- Select top-k results  
+
+🔹 Step 10: Fallback Mechanism  
+- If no candidates survive filtering:  
+  • Select top raw chunks  
+  • Assign minimal default score  
+
+---
+
+### 🛠 Technologies Used
+
+PyTorch (GPU/CPU support)  
+
+HuggingFace Transformers  
+
+MiniLM (sentence-transformers/all-MiniLM-L6-v2)  
+
+NumPy  
+
+Regex + Hashing  
+
+---
+
+### 🧹 Filtering Logic
+
+Module 5 removes:
+
+Short or incomplete text  
+
+Generic boilerplate phrases  
+
+Weak claims without supporting detail  
+
+Duplicate content  
+
+Low relevance evidence  
+
+Over-represented sources  
+
+---
+
+### ⚙️ Design Philosophy
+
+Module 5 is designed to be:
+
+🔹 Retrieval refinement focused  
+
+🔹 Fully local (no API calls / no Gemini)  
+
+🔹 Efficient (MiniLM lightweight model)  
+
+🔹 Hybrid (rules + semantic embeddings)  
+
+🔹 Scalable and model-independent  
+
+This ensures:
+
+High precision evidence  
+
+Reduced noise for generation  
+
+Better factual grounding  
+
+Compatibility with local LLM pipelines  
+
+---
+
+### 📤 Output Format
+```
+[
+  {
+    "claim_id": 1,
+    "claim": "Artificial intelligence will replace most human jobs within the next 20 years",
+    "filtered_evidence": [
+      {
+      "source": "CNN – AI replace human workers",
+      "url": "https://...",
+      "content": "Relevant paragraph text...",
+      "score": 8.73,
+      "semantic": 0.81
+      }
+    ]
+  }
+]
+```
+
+### 🔹 Module 6 – Debate Response Generation (LLaMA + Evidence Grounding)
+
+File: module6_llm_reasoning.py
+
+#### 🎯 Purpose
+
+Module 6 generates the final balanced debate output using filtered evidence from Module 5.
+
+It does NOT:
+
+Perform retrieval or filtering  
+
+Classify debatability  
+
+Modify claims  
+
+It ONLY:
+
+Generates structured debate responses  
+
+Uses evidence-grounded reasoning  
+
+Produces pro vs against arguments  
+
+Streams output in real-time  
+
+This is the final reasoning and presentation layer of the pipeline.
+
+---
+
+#### 🧠 Processing Strategy
+
+For each claim:
+
+🔹 Input:  
+- Claim  
+- Filtered evidence (from Module 5)  
+
+---
+
+🔹 Step 1: Cleaning for LLM  
+- Removes URLs, citations, brackets  
+- Normalizes whitespace  
+- Prevents noisy tokens entering prompt  
+
+---
+
+🔹 Step 2: Token-Aware Evidence Selection  
+- Estimates token usage (`len(text)//4`)  
+- Ensures total input stays within context window  
+- Selects top evidence chunks safely  
+- Truncates long text (~280 chars per chunk)  
+
+---
+
+🔹 Step 3: Prompt Construction (Strict 🔒)  
+
+The model is guided using a highly controlled prompt:
+
+- Exactly 3–5 PRO points  
+- Exactly 3–5 AGAINST points  
+- Each point ≤ 2 lines  
+- No citations ([1], etc.)  
+- No hallucinated sections  
+- Must use evidence  
+
+This ensures structured and reliable output.
+
+---
+
+🔹 Step 4: LLaMA Inference (Local 🔥)  
+- Model: Meta-Llama-3-8B-Instruct (GGUF quantized)  
+- Runs via `llama.cpp`  
+- GPU + CPU hybrid execution  
+- Config:
+  • Temperature = 0.6  
+  • Top-p = 0.9  
+  • Repeat penalty = 1.15  
+
+---
+
+🔹 Step 5: Streaming Output  
+- Generates tokens incrementally  
+- Yields partial responses in real-time  
+- Improves UI responsiveness (Gradio streaming)  
+
+---
+
+🔹 Step 6: Output Cleaning & Safety Fix  
+- Removes unwanted sections (e.g., “IMPLICATIONS”)  
+- Ensures conclusion exists  
+- Adds fallback conclusion if missing  
+
+---
+
+🔹 Step 7: Structured Parsing  
+- Extracts:
+  • PRO arguments  
+  • AGAINST arguments  
+  • CONCLUSION  
+
+- Uses rule-based parsing from generated text  
+
+---
+
+🔹 Step 8: Fallback Handling  
+- If parsing fails:
+  • Returns raw truncated output  
+  • Prevents pipeline crash  
+
+---
+
+### 🛠 Technologies Used
+
+llama.cpp (via llama-cpp-python)  
+
+Meta LLaMA 3 8B Instruct (quantized GGUF)  
+
+Regex-based cleaning & parsing  
+
+Streaming generation  
+
+---
+
+### ⚙️ Design Philosophy
+
+Module 6 is designed to be:
+
+🔹 Fully local (no API dependency)  
+
+🔹 Evidence-grounded (reduces hallucination)  
+
+🔹 Streaming-first (real-time UX)  
+
+🔹 Strictly structured (controlled output format)  
+
+🔹 Token-aware (efficient context usage)  
+
+This ensures:
+
+Reliable argument generation  
+
+Balanced reasoning  
+
+Low latency with large models  
+
+Compatibility with offline systems  
+
+---
+
+### 📤 Output Format
+```
+{
+  "type": "final",
+  "claim_id": 1,
+  "claim": "Artificial intelligence will replace most human jobs within the next 20 years",
+  "pro": [
+    "AI can automate repetitive tasks, increasing efficiency",
+    "Companies can reduce labor costs significantly"
+  ],
+  "against": [
+    "AI cannot replace creative and emotional human roles",
+    "New jobs will emerge alongside automation"
+  ],
+    "conclusion": "AI will significantly transform jobs, but complete replacement is unlikely."
+}
 ```
 
 ### 🖥️ User Interface
