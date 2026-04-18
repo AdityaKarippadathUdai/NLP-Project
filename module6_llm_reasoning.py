@@ -1,38 +1,39 @@
-# module6_llm_reasoning.py
-
 from llama_cpp import Llama
 from typing import List, Dict, Generator
 import re
+import os
 
 # ======================================================
-# CONFIG
+# CONFIG (MISTRAL)
 # ======================================================
-MODEL_PATH = r"F:\Project\GPU\NLP project\quantized\llama\Meta-Llama-3-8B-Instruct-Q4_K_M.gguf"
+MODEL_PATH = "/home/aditya/Project/models/quantized/mistral/mistral-7b-instruct-v0.2.Q4_K_M.gguf"
 
 N_CTX = 4096
-MAX_GENERATION_TOKENS = 900   # stable generation
 
-TEMPERATURE = 0.6
-TOP_P = 0.9
-REPEAT_PENALTY = 1.15
+# Bigger output (Mistral handles well)
+MAX_GENERATION_TOKENS = 1800
 
-RESERVED_OUTPUT_TOKENS = 700
+TEMPERATURE = 0.7
+TOP_P = 0.95
+REPEAT_PENALTY = 1.1
+
+RESERVED_OUTPUT_TOKENS = 1500
 MAX_INPUT_TOKENS = N_CTX - RESERVED_OUTPUT_TOKENS
 
 
 # ======================================================
 # LOAD MODEL
 # ======================================================
-print("🔄 Loading LLaMA model...")
+print("🔄 Loading Mistral model...")
 
 llm = Llama(
     model_path=MODEL_PATH,
     n_ctx=N_CTX,
-    n_threads=8,
-    n_gpu_layers=35
+    n_threads=os.cpu_count(),
+    n_gpu_layers=35  # adjust if no GPU
 )
 
-print("✅ LLaMA loaded!")
+print("✅ Mistral loaded!")
 
 
 # ======================================================
@@ -43,9 +44,9 @@ def _clean(text: str) -> str:
 
 
 def _clean_for_llm(text: str) -> str:
-    text = re.sub(r"http\S+", "", text)      # remove URLs
-    text = re.sub(r"\([^)]*\)", "", text)    # remove brackets
-    text = re.sub(r"\[[^\]]*\]", "", text)   # remove [1] citations
+    text = re.sub(r"http\S+", "", text)
+    text = re.sub(r"\([^)]*\)", "", text)
+    text = re.sub(r"\[[^\]]*\]", "", text)
     return _clean(text)
 
 
@@ -57,7 +58,7 @@ def _estimate_tokens(text: str) -> int:
 
 
 # ======================================================
-# EVIDENCE SELECTION (TOKEN SAFE)
+# SMART EVIDENCE SELECTION
 # ======================================================
 def _select_evidence(evidence: List[Dict], claim: str) -> str:
 
@@ -65,7 +66,7 @@ def _select_evidence(evidence: List[Dict], claim: str) -> str:
     total_tokens = _estimate_tokens(claim) + 150
 
     for ev in evidence:
-        content = _clean_for_llm(ev.get("content", ""))[:280]
+        content = _clean_for_llm(ev.get("content", ""))[:350]
 
         if len(content) < 60:
             continue
@@ -79,18 +80,20 @@ def _select_evidence(evidence: List[Dict], claim: str) -> str:
         total_tokens += tokens
 
     if not selected and evidence:
-        selected.append(_clean_for_llm(evidence[0].get("content", ""))[:200])
+        selected.append(_clean_for_llm(evidence[0].get("content", ""))[:250])
 
     return "\n\n".join(f"- {txt}" for txt in selected)
 
 
 # ======================================================
-# STRICT PROMPT (ANTI-HALLUCINATION)
+# MISTRAL PROMPT (CHAT FORMAT)
 # ======================================================
 def _build_prompt(claim: str, evidence_text: str) -> str:
 
-    return f"""
+    return f"""<s>[INST]
 You are an expert debate analyst.
+
+Analyze the claim deeply using provided evidence.
 
 CLAIM:
 {claim}
@@ -98,34 +101,29 @@ CLAIM:
 EVIDENCE:
 {evidence_text}
 
-STRICT INSTRUCTIONS:
-- Give EXACTLY 3-5 PRO points
-- Give EXACTLY 3-5 AGAINST points
-- Keep each point under 2 lines
-- Do NOT use [1], [2] or citations
-- Do NOT add extra sections
-- Do NOT repeat the claim
-- Use evidence meaningfully
+INSTRUCTIONS:
+- Provide a detailed debate
+- Give 6-10 PRO arguments (deep reasoning)
+- Give 6-10 AGAINST arguments (critical reasoning)
+- Each point should be 2-4 lines
+- Use evidence meaningfully (not generic)
+- Avoid repetition
 
-FORMAT (STRICT):
+FORMAT:
 
 PRO:
-- ...
-- ...
 - ...
 
 AGAINST:
 - ...
-- ...
-- ...
 
 CONCLUSION:
-- 2 concise sentences only
-"""
+- 4-6 insightful sentences
+[/INST]"""
 
 
 # ======================================================
-# STREAM GENERATION (FIXED)
+# STREAM GENERATION
 # ======================================================
 def _stream_generate(prompt: str) -> Generator[str, None, None]:
 
@@ -151,17 +149,15 @@ def _stream_generate(prompt: str) -> Generator[str, None, None]:
 
 
 # ======================================================
-# OUTPUT VALIDATION (CRITICAL FIX)
+# OUTPUT CLEANUP
 # ======================================================
 def _fix_output(text: str) -> str:
 
-    # Remove unwanted sections
     text = re.sub(r"IMPLICATIONS.*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"NOTE:.*", "", text, flags=re.IGNORECASE)
 
-    # Ensure conclusion exists
     if "CONCLUSION" not in text:
-        text += "\n\nCONCLUSION:\n- AI will transform jobs, but full replacement is unlikely."
+        text += "\n\nCONCLUSION:\n- The issue is complex with both strong advantages and drawbacks."
 
     return text.strip()
 
@@ -227,7 +223,7 @@ def generate_debate_output_stream(filtered_results: List[Dict]):
         full_output = ""
 
         try:
-            # STREAM OUTPUT
+            # STREAM
             for partial in _stream_generate(prompt):
                 full_output = partial
 
@@ -238,21 +234,16 @@ def generate_debate_output_stream(filtered_results: List[Dict]):
                     "text": full_output
                 }
 
-            # FIX OUTPUT
+            # FINAL FIX
             full_output = _fix_output(full_output)
-
             parsed = _parse_output(full_output)
-
-            # fallback safety
-            if not parsed["pro"] or not parsed["against"]:
-                parsed["conclusion"] = full_output[:400]
 
             yield {
                 "type": "final",
                 "claim_id": item.get("claim_id"),
                 "claim": claim,
-                "pro": parsed["pro"][:5],
-                "against": parsed["against"][:5],
+                "pro": parsed["pro"][:10],
+                "against": parsed["against"][:10],
                 "conclusion": parsed["conclusion"]
             }
 

@@ -20,6 +20,6 @@ venv/
 1.py
 __huggingface_repos__.json
 eval.py
-
+models/
 quantized/llama/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
 quantized/mistral/mistral-7b-instruct-v0.2.Q4_K_M.gguf
