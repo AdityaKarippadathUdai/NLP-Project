@@ -237,4 +237,4 @@ with gr.Blocks(title="Debate-Based Claim Analysis System") as demo:
 # LAUNCH
 # ============================
 if __name__ == "__main__":
-    demo.launch(share=True)
+    demo.launch(server_name="0.0.0.0", server_port=7860)
