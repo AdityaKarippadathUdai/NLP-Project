@@ -855,6 +855,11 @@ Windows (CMD):
 ```
 gpuenv\Scripts\activate
 ```
+Linux(Terminal):
+```
+source gpuenv/bin/activate
+```
+
 #### 2️⃣ Install Dependencies
 ```
 pip install torch transformers nltk spacy wikipedia-api requests gradio google-genai
